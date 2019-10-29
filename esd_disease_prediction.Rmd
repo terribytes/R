@@ -1,0 +1,506 @@
+---
+title: "DA5030.Proj.Shen"
+author: "Jia Yi (Terri) Shen"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+date: 08/2019
+---
+```{r Loading packages}
+# Loading packages
+library(ggplot2)
+library(caret)
+#install.packages("fastDummies")
+library(fastDummies)
+library(psych)
+#install.packages("reticulate")
+library(reticulate)
+library(reshape2)
+library("neuralnet")
+library(ggplot2)
+library(C50)
+library(gmodels)
+library(e1071)
+library(gmodels)
+```
+
+# CRISP-DM: Business Understanding
+
+There are total of six possible phenotypes of ESD disease: psoriasis, seborrhoeic dermatitis, lichen planus, pityriasis rosea, chronic dermatitis, pityriasis rubra pilaris. ESD disease are common in the population and share some of the clinical features of scaling and symptom with very small difference which make the differential diagnosis very difficult.
+
+The objective of this project is to construct and compare the models that will automatic detect the type of ESD diseases in order to:
+
+  - Reduce the unnecessary biopsy cost
+  - Help physician for decision making 
+  - Shorten the diagnosis time length
+  - Assign effective treatment for the patients
+  - Further enhance drug development efforts
+
+# CRISP-DM: Data Understanding
+
+## Data Acquisition
+
+  - The dermatology data set used in this study is downloaded from UCI Machine Learning Repository.
+  - The data set was provided by Gazi University School of Medicine, and Bilkent University Department of Computer Engineering and Information Science from January 1998.
+  - Patients were first evaluated clinically with 12 features.
+  - The skin samples were then taken for the evaluation of 22 histopathological features. The values of the histopathological features are determined by an analysis of the samples under a microscope.
+
+```{r Data Acquisition}
+# Loading data to data frame
+eds_df <- read.csv("dermatology.data", dec = ",", header = FALSE, stringsAsFactors = FALSE)
+
+# Assign column names to the data frame
+colnames(eds_df) <- c("erythema", "scaling", "definite.borders", "itching", "koebner.phenomenon", "polygonal.papules", "follicular.papules", "oral.mucosal.involvement", "knee.and.elbow.involvement", "scalp.involvement", "family.history", "melanin.incontinence", "eosinophils.in.the infiltrate", "PNL.infiltrate", "fibrosis.of.the.papillary.dermi", "exocytosis", "acanthosis", "hyperkeratosis", "parakeratosis", "clubbing.of.the.rete.ridges", "elongation.of.the.rete.ridges", "thinning.of.the.suprapapillary.epidermis", "spongiform.pustule", "munro.microabcess", "focal.hypergranulosis", "disappearance.of.the.granular.layer", "vacuolisation.and.damage.of.basal.layer", "spongiosis", "saw-tooth.appearance.of.retes", "follicular.horn.plug", "perifollicular.parakeratosis" ,"inflammatory.monoluclear.inflitrate", "band-like.infiltrate", "age", "type")
+```
+
+### Data Exploration and Data Preparation (Cleaning and Shaping)
+
+#### INSPECT
+
+I will inspect on the data set then perform any transformation if needed:
+
+- Structure and data type
+  * There are total of 34 attributes, 366 instances (observations), and 6 Classes.
+  * Clinical and histopathological attributes are mostly ordinal categorical variables ranging from (0-3) with two exceptions:
+    * Family history is a categorical 0/1 variable
+    * Age is a continuous variable
+- Exploratory data plots
+  * Histogram to detect outliers
+  * Notice that we are unable to plot the age column because it will require some data transoformation of the data type. We will deal with that in the transformation section later.
+- Explore missing data
+  * There are total of 8 missing data recorded as ? in the age column.
+  
+```{r Data Exploration & Preparation - INSPECT}
+# -- STRUCTURE AND DATA TYPE --
+# Take a quick glace at the original structure and data type
+str(eds_df)
+summary(eds_df)
+
+# -- DETECTING OUTLIERS -- 
+# Exploratory histograms data plots to detect outliers for every features see if there is any sign of human error since the description stated that the symptoms are recorded in the range or 0 - 3, 0/1, and numeric.
+## Looks like all the data points are expected
+par(mfrow = c(3,3)) # Vector to show graphs
+for (i in 1:33) {
+  x <- eds_df[,i]
+  hist(x, 
+      main = paste(colnames(eds_df[i])),
+      xlab = "Measure index")
+}
+# -- MISSING DATA DETECTION-- 
+# Checking if there is missing data
+sum(is.na(eds_df))
+length(which(eds_df == "?"))
+```
+
+#### TRANSFORM
+
+I will make the neccessary data transformation for building the models:
+
+- Missing data imutation: It makes sense to impute 8 missing data in age by mode in this study.
+- Transform data type: Transform the data accordingly to its data type for the best performance on R.
+  * Column 1-33 as ordinal categorical category.
+  * As we state previously about the age column, it is recorded as "character" which is not a categorical variable but discrete numeric. A histogram is plotted to by transforming it into integer. From the histogram, I can see that the age group can be categorized into 4 groups. Therefore, I separate this dataset into 4 bins (1:0-20, 2:21-40, 3:41-60, and 4:61-80).
+  * After binning, the data type for column 34 and 35 is transformed to factors.
+
+
+```{r Data Exploration & Preparation - TRANSFORM}
+# -- MISSING DATA IMPUTATION --
+# There are 8 missing data recorded as "?" in the age column. It make more sense to imputate missing data in age by mode in this study.
+getMode <- function(x) {
+  uniquex <- unique(x)
+  uniquex[which.max(tabulate(match(x, uniquex)))]
+}
+age_Mode <- getMode(eds_df$age)
+eds_df[eds_df == "?"] <- age_Mode
+length(which(eds_df == "?")) # Check if imputation is successful
+
+# -- TRANSFORM DATA TYPE --  
+# Transform the data accordingy to its data type for the best performance on R
+## Column 1-33 as ordinal categorical variables so I will assign the order to its level
+eds_df[,c(1:33)] <- data.frame(lapply(eds_df[1:33], as.character, as.factor, levels = c(0:3), ordered = TRUE))
+str(eds_df[,c(1:33)])
+
+## Column 34 is recorded as "character" which is not categorical vairable but discrete numeric, therefore I will transform it to categorical variables by discretization (binning) since I will be using Naive Bayes later.
+eds_df$age <- as.integer(eds_df$age)
+summary_age <- summary(eds_df$age)
+summary_age
+hist(eds_df$age)
+
+### According to the histogram I think it makes sense to separate the age group into 4 bins (1:0-20, 2:21-40, 3:41-60, and 4:61-80)
+par(mfrow = c(1,1))
+eds_df$age # Before binning
+eds_df$age[which(eds_df$age <= 20)] <- 1
+eds_df$age[which(eds_df$age > 20 & eds_df$age <= 40)] <- 2
+eds_df$age[which(eds_df$age > 40 & eds_df$age <= 60)] <- 3
+eds_df$age[which(eds_df$age >= 61)] <- 4
+eds_df$age # After binning
+hist(eds_df$age) # After binning
+str(eds_df$age) # The structure table shows that it is still numeric variables (continous), but it is categorical vairables after binning
+eds_df$age <- as.factor(eds_df$age)# We will construct is as factor which indicates categorical variables
+
+## Column 35 is categorical vairable without order and this is the classification outcome that we are trying to find out
+eds_df$type <- as.factor(eds_df$type)
+plot(eds_df$type, col = "blue", main = "Count of Type", xlab = "Count", ylab = "Type of ESD Disease" )
+
+## Looking good!
+str(eds_df)
+```
+
+#### EXPLORE CORRELATION AND PCA
+
+I will explore further to get an overview of the data:
+
+-  Correlation: Before proceeding with principal component analysis, I try to undetstand the correlation of the features among themselves and which of them are a lot more dependent on each other and the others. I will choose Kendal's tau statistic because it estimate rank-based measure of assocciation.
+- Principal component analysis: I apply PCA by scaling the features using z standard score of the sample x in all the columns apart from the y value (type) which we try to predict. I then show the explained variance which is the measure of the proportion to which a mathematical model accounts for the variabtion (dispersion) of a given data set.
+
+```{r Data Exploration & Preparation - EXPLORE CORRELATION AND PCA}
+# -- CORRELATION --
+# Most of them do have some level of dependency on others and it is quite hard to draw a very definitive pattern.
+cor_df <- eds_df
+cor_df <- apply(eds_df, 2, function(x) as.numeric(as.character(x)))
+cor <- cor(cor_df, method = "kendall")
+melted_cormat <- melt(cor)
+ggplot(data = melted_cormat, aes(Var1, Var2, fill = value)) +
+  geom_tile(colour = "white") +
+  scale_fill_viridis_c(name = "correlation index") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(labels = abbreviate)
+
+# -- PRINCIPAL COMPONENT ANALYSIS --
+# Apply PCA by scaling the features using z standard score of the sample in all the columns apart from the y value (type) which we try to predict.
+# We then show the explained variance which is the measure of the proportion to which a mathematical model accounts for the variation (dispersion) of a given data set.
+pca <- prcomp(cor_df[,1:34], center = TRUE, scale = TRUE)
+summary(pca)
+
+pov <- pca$sdev^2 / sum(pca$sdev^2)
+pov
+
+# Try to plot the graph to learn which features carry maximum information. In this case, the first column "erythema" explain the maximum information.
+plot(pov , type = "h", col = "blue", main = "The PCA table", xlab = "Principle Component", ylab = "Explained Variance Ratio")
+```
+
+#### FEATURE ENGINEERING
+
+I will construct three types of data frame for model training:
+
+- Orginal data frame for decision tree.
+- Make a dummy coded data frame for neural network modeling.
+- Convert the diagnosis index to unique string for frequency table using to construct Naive Bayes modeling.
+
+```{r Data Preparation - FEATURE ENGINEERING}
+# -- DUMMYCODE --
+# Dummycode the categorical variables
+## Copy a new data frame to create dmy data frame
+eds_df_dmy <- eds_df
+
+dmy <- dummyVars("~.", data = eds_df_dmy[c(1:35)])
+eds_df_dmy <- data.frame(predict(dmy, newdata = eds_df_dmy[c(1:35)]))
+
+# Check if dummy code is created successfully
+names(eds_df_dmy)
+
+# -- DIAGNOSIS INDEX TO UNIQUE STRING --
+# Convert the diagnosis index to unique string for frequency table using to construct Naive Bayes function
+
+eds_df_nb <- data.frame(lapply(eds_df, as.character), stringsAsFactors = FALSE)
+for (i in 0:6){
+  # Col 1-10
+  eds_df_nb$erythema[which(eds_df_nb$erythema == i)] <- paste(colnames(eds_df_nb[1]), i)
+  eds_df_nb$scaling[which(eds_df_nb$scaling == i)] <- paste(colnames(eds_df_nb[2]), i)
+  eds_df_nb$definite.borders[which(eds_df_nb$definite.borders == i)] <- paste(colnames(eds_df_nb[3]), i)
+  eds_df_nb$itching[which(eds_df_nb$itching == i)] <- paste(colnames(eds_df_nb[4]), i)
+  eds_df_nb$koebner.phenomenon[which(eds_df_nb$koebner.phenomenon == i)] <- paste(colnames(eds_df_nb[5]), i)
+  eds_df_nb$polygonal.papules [which(eds_df_nb$polygonal.papules == i)] <- paste(colnames(eds_df_nb[6]), i)
+  eds_df_nb$follicular.papules[which(eds_df_nb$follicular.papules == i)] <- paste(colnames(eds_df_nb[7]), i)
+  eds_df_nb$oral.mucosal.involvement [which(eds_df_nb$oral.mucosal.involvement == i)] <- paste(colnames(eds_df_nb[8]), i)
+  eds_df_nb$knee.and.elbow.involvement[which(eds_df_nb$knee.and.elbow.involvement == i)] <- paste(colnames(eds_df_nb[9]), i)
+  eds_df_nb$scalp.involvement[which(eds_df_nb$scalp.involvement == i)] <- paste(colnames(eds_df_nb[10]), i)
+  # Col 11-20
+  eds_df_nb$family.history[which(eds_df_nb$family.history == i)] <- paste(colnames(eds_df_nb[11]), i)
+  eds_df_nb$melanin.incontinence[which(eds_df_nb$melanin.incontinence == i)] <- paste(colnames(eds_df_nb[12]), i)
+  eds_df_nb$eosinophils.in.the.infiltrate[which(eds_df_nb$eosinophils.in.the.infiltrate == i)] <- paste(colnames(eds_df_nb[13]), i)
+  eds_df_nb$PNL.infiltrate[which(eds_df_nb$PNL.infiltrate == i)] <- paste(colnames(eds_df_nb[14]), i)
+  eds_df_nb$fibrosis.of.the.papillary.dermi[which(eds_df_nb$fibrosis.of.the.papillary.dermi == i)] <- paste(colnames(eds_df_nb[15]), i)
+  eds_df_nb$exocytosis[which(eds_df_nb$exocytosis == i)] <- paste(colnames(eds_df_nb[16]), i)
+  eds_df_nb$acanthosis[which(eds_df_nb$acanthosis == i)] <- paste(colnames(eds_df_nb[17]), i)
+  eds_df_nb$hyperkeratosis[which(eds_df_nb$hyperkeratosis == i)] <- paste(colnames(eds_df_nb[18]), i)
+  eds_df_nb$parakeratosis[which(eds_df_nb$parakeratosis == i)] <- paste(colnames(eds_df_nb[19]), i)
+  eds_df_nb$clubbing.of.the.rete.ridges[which(eds_df_nb$clubbing.of.the.rete.ridges == i)] <- paste(colnames(eds_df_nb[20]), i)
+  # Col 21-30
+  eds_df_nb$elongation.of.the.rete.ridges[which(eds_df_nb$elongation.of.the.rete.ridges == i)] <- paste(colnames(eds_df_nb[21]), i)
+  eds_df_nb$thinning.of.the.suprapapillary.epidermis[which(eds_df_nb$thinning.of.the.suprapapillary.epidermis == i)] <- paste(colnames(eds_df_nb[22]), i)
+  eds_df_nb$spongiform.pustule[which(eds_df_nb$spongiform.pustule == i)] <- paste(colnames(eds_df_nb[23]), i)
+  eds_df_nb$munro.microabcess[which(eds_df_nb$munro.microabcess == i)] <- paste(colnames(eds_df_nb[24]), i)
+  eds_df_nb$focal.hypergranulosis[which(eds_df_nb$focal.hypergranulosis == i)] <- paste(colnames(eds_df_nb[25]), i)
+  eds_df_nb$disappearance.of.the.granular.layer[which(eds_df_nb$disappearance.of.the.granular.layer == i)] <- paste(colnames(eds_df_nb[26]), i)
+  eds_df_nb$vacuolisation.and.damage.of.basal.layer[which(eds_df_nb$vacuolisation.and.damage.of.basal.layer == i)] <- paste(colnames(eds_df_nb[27]), i)
+  eds_df_nb$spongiosis[which(eds_df_nb$spongiosis == i)] <- paste(colnames(eds_df_nb[28]), i)
+  eds_df_nb$saw.tooth.appearance.of.retes[which(eds_df_nb$saw.tooth.appearance.of.retes == i)] <- paste(colnames(eds_df_nb[29]), i)
+  eds_df_nb$follicular.horn.plug[which(eds_df_nb$follicular.horn.plug == i)] <- paste(colnames(eds_df_nb[30]), i)
+  # Col 31-35
+  eds_df_nb$perifollicular.parakeratosis[which(eds_df_nb$perifollicular.parakeratosis == i)] <- paste(colnames(eds_df_nb[31]), i)
+  eds_df_nb$inflammatory.monoluclear.inflitrate[which(eds_df_nb$inflammatory.monoluclear.inflitrate == i)] <- paste(colnames(eds_df_nb[32]), i)
+  eds_df_nb$band.like.infiltrate[which(eds_df_nb$band.like.infiltrate == i)] <- paste(colnames(eds_df_nb[33]), i)
+  eds_df_nb$age[which(eds_df_nb$age == i)] <- paste(colnames(eds_df_nb[34]), i)
+  eds_df_nb$type[which(eds_df_nb$type == i)] <- paste(colnames(eds_df_nb[35]), i)
+}
+```
+
+# Data Modelling
+
+The training and testing set are parted with 75/25 ratio. Four model will be constructed to predict the class of ESD disease:
+
+1. Neural Network via neuralnet
+2. Decision Tree via C5.0
+3. Naive Bayes via e1071
+4. Alternative Naive Bayes
+
+```{r Data Modelling - training & validation subsets 75/25}
+# Creating training & validation subsets 75/25
+set.seed(425)
+partition_75 <- createDataPartition(eds_df_dmy[[1]], p = 0.75, list = FALSE)
+
+# Create training and data set one with original data, one with the dummy coded data, and one for NB classifer
+## Dummy data set
+eds_df_dmy_train <- eds_df_dmy[partition_75,]
+eds_df_dmy_test <- eds_df_dmy[-partition_75,]
+
+## Original data set
+#eds_df[,35] <- data.frame(lapply(eds_df[35], as.character), stringAsFactor = TRUE)
+eds_df_train <- eds_df[partition_75,]
+eds_df_test <- eds_df[-partition_75,]
+
+## Data set for frequency table
+eds_df_nb_train <- eds_df_nb[partition_75,]
+eds_df_nb_test <- eds_df_nb[-partition_75,]
+```
+
+## Neural Network via neuralnet
+
+The dummy data frame has been trained with logistic neural network via neuralnet package to predict the class of the ESD disease. With 1 hidden node, the accuracy is quiet low about 0.6263736. However, the accuracy increases dramatically as the hidden node increases.
+
+Networks with more complex topologies are capable of learning more difficult concepts, I increases the number of hidden node to improve the model. Using the elbow law, I concluded that the hidden node of 4 which results in accuracy of 0.9670330 is the best performance improved model. The trend is quite stable as you can see in the below hidden node vs. accuracy graph.
+
+```{r Neural Network}
+# -- TRAIN -- 
+# Training using data frame with dummy code since neralnet only deals with quantitative variables.
+# Construct a formula
+names <- names(eds_df_dmy)
+x <-"type.1 + type.2 + type.3 + type.4 + type.5 + type.6" # Column 134 - 139 
+y <- as.formula(paste(x, paste(names[!names %in% x], collapse = " + "), sep=" ~ "))
+
+# Construct a model with 1 hidden layer
+set.seed(425)
+nn_model <- neuralnet(y, data = eds_df_dmy_train, hidden = 1, act.fct = "logistic", linear.output = FALSE)
+plot(nn_model)
+
+# -- EVALUATE --
+nn_model_pred <- neuralnet::compute(nn_model, eds_df_dmy_test)
+pred_nn <- nn_model_pred$net.result # See the neurons for each layer in the network and the predicted value
+
+# Find the accuracy of the test set
+actual_results <- max.col(eds_df_dmy_test[, 134:139])
+predict_results <- max.col(pred_nn)
+mean(predict_results == actual_results)
+
+# -- IMPROVING MODEL PERFORMANCE -- 
+## Construct Hidden node of 1 to 10 layers
+nn_model_nodes <- data.frame( `Hidden Node` = c(1:10), Accuracy = rep(NA,10))
+for (i in 1:10) {
+  set.seed(425)
+  nn_model <- neuralnet(y, data = eds_df_dmy_train, hidden = i, act.fct = "logistic", linear.output = FALSE)
+  #plot(nn_model)
+  
+  # Evaluate result on test data set
+  nn_model_pred <- neuralnet::compute(nn_model, eds_df_dmy_test)
+  pred_nn <- nn_model_pred$net.result # See the neurons for each layer in the network and the predicted value
+  #head(pred_nn)
+  
+  # Find the accuracy of the test set
+  actual_results <- max.col(eds_df_dmy_test[, 134:139])
+  predict_results <- max.col(pred_nn)
+  nn_model_nodes[i,2] <- mean(predict_results == actual_results)
+}
+nn_model_nodes
+
+## Plot the Hidden Nodes vs. Accuracy Table
+library(ggplot2)
+
+ggplot(data = nn_model_nodes, aes(x = nn_model_nodes$Hidden.Node, y = nn_model_nodes$Accuracy)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Number of Hidden Node in Neural Network vs. Accuracy", x = "Number of Hidden Node in Neural Network", y = "Accuracy")
+```
+
+## Decision Tree via C5.0
+
+The original data frame has been trained with C5.0 decision tree model via C50 package to predict the class of the ESD disease. Without boosting, the accuracy is about 0.9450549. However, the accuracy punctuate as the boosting increases.
+
+Boosting usually increase the accuracy since multiple separate decision trees or rulesets are combined to make prediction. However, in this case boosting doesn't help, which suggest that the training cases are noisy and a further analysis is needed. Due to this reason, I will still pick the model without boosting as the final model for decision tree and keep in mind that the data exist a noisy which need further analysis.
+
+
+```{r C5.0 Decision Tree Model}
+# -- TRAIN--
+# Training using data frame without dummy code since decision tree takes both categorical and numeric variables.
+dt_model <- C5.0(eds_df_train[1:34], eds_df_train$type)
+dt_model
+summary(dt_model)
+
+# -- EVALUATE--
+dt_pred <- predict(dt_model, eds_df_test[1:34])
+x <- table(eds_df_test$type, dt_pred)
+sum(diag(x))/sum(x) # 0.9450549 accuracy rate
+
+# -- IMPROVING MODEL PERFORMANCE -- 
+# We will use boosting to improve our model
+## Construct boosting from 1-10
+dt_model_boost <- data.frame( `Boost` = c(1:10), Accuracy = rep(NA,10))
+for (i in 1:10) {
+  set.seed(425)
+  dt_boost <- C5.0(eds_df_train[1:34], eds_df_train$type, trials = i)
+  dt_boost_pred <- predict(dt_boost, eds_df_test[1:34])
+  x <- table(eds_df_test$type, dt_boost_pred)
+  dt_model_boost[i,2] <- sum(diag(x))/sum(x)
+}
+dt_model_boost
+
+## Plot the Boosting vs. Accuracy Table
+par(mfrow = c(1,1))
+library(ggplot2)
+
+ggplot(data = dt_model_boost, aes(x = dt_model_boost$Boost, y = dt_model_boost$Accuracy)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Number of Boosting in C5.0 Decision Tree Model vs. Accuracy", x = "Number of Boosting in C5.0 Decision Tree Model", y = "Accuracy")
+```
+
+## Naive Bayes via e1071
+
+The original data frame has been trained with Naive Bayes model via e1071 package to predict the class of the ESD disease. Without laplace, the accuracy is about 1. However, this might shows a overfitting problem.
+
+In order to solve the overfitting problem, laplace smoothing parameter is added. Laplace smoothing solves the overfitting problem by adding 1 to every count to the combination of factors that never occur so it's never zero probability. The final accuracy after adding the Laplace smoothing is calculated to be 0.989011.
+
+```{r e1071 Naive Bayes}
+# -- TRAIN --
+nb_model <- naiveBayes(eds_df_train, eds_df_train$type)
+
+# -- EVALUATE --
+nb_model_pred <- predict(nb_model, eds_df_test[1:34])
+CrossTable(nb_model_pred, eds_df_nb_test$type,
+           prop.chisq = FALSE, prop.t = FALSE,
+           dnn = c('predicted', 'actual'))
+x <- table(eds_df_test$type, nb_model_pred)
+sum(diag(x))/sum(x) # 0.9890909 accuracy rate
+
+# -- IMPROVING MODEL PERFORMANCE -- 
+# We will use laplace to improve our model
+set.seed(425)
+nb_laplace <- naiveBayes(eds_df_train, eds_df_train$type, laplace = 1)
+nb_model_laplace_pred <- predict(nb_laplace, eds_df_test[1:34])
+x <- table(eds_df_test$type, nb_model_laplace_pred)
+dt_model_laplace <- sum(diag(x))/sum(x)
+dt_model_laplace
+```
+
+## Alternative Naive Bayes
+
+The diagnosis index to unique string data frame has been trained with Naive Bayes model construct by myself from studying the Naive Bayes rule to predict the class of the ESD disease.
+The training step construct two frequency tables from the training data set - one with the likelihood of the predictors (observed symptom) and another one with the likelihood of the outcome (type of ESD disease).
+
+My naive bayes model shows an accuracy of 0.8571429, which suggest that the naiveBayes function from e1071 did a lot of fine tuning and model optimization. To further improve my naive bayes model, I will actually apply some sort of classifier combination such as ensembling, boosting, and bagging. It also makes sense to explore further at the data quality.
+
+Since the naive bayes model from e1071 package perform quite well, I will skip the model improvement for my naive bayes model.
+
+```{r Alternative Naive Bayes}
+# -- TRAIN --
+# Building Naive Bayes classifier from the training data set
+## 1. Identify the categorical predictors date frame and the outcome data frame
+type <- eds_df_nb_train[,35]
+
+## 2. Building function for making the frequency liklihood table
+freq_lik_function <- function(x) {
+  tbl_freq <- table(x, type)
+  percent_type1 <- round(tbl_freq[,1]/sum(tbl_freq[,1]), 6)
+  percent_type2 <- round(tbl_freq[,2]/sum(tbl_freq[,2]), 6)
+  percent_type3 <- round(tbl_freq[,3]/sum(tbl_freq[,3]), 6)
+  percent_type4 <- round(tbl_freq[,4]/sum(tbl_freq[,4]), 6)
+  percent_type5 <- round(tbl_freq[,5]/sum(tbl_freq[,5]), 6)
+  percent_type6 <- round(tbl_freq[,6]/sum(tbl_freq[,6]), 6)
+  all <- cbind(tbl_freq, percent_type1, percent_type2, percent_type3, percent_type4, percent_type5, percent_type6)
+  colnames(all) <- c("type1", "type2", "type3", "type4", "type5", "type6",
+                     "percent_type1", "percent_type2", "percent_type3", "percent_type4", "percent_type5", "percent_type6")
+  all
+}
+
+## 3. Apply to all categorical variables and print out a list
+final_freq_lik_table <- do.call(rbind, lapply(eds_df_nb_train[1:34], freq_lik_function))
+final_freq_lik_table
+
+## 4. Construct a frequency table for 6 types
+type_freq_table <- table(eds_df_nb_train$type)
+type_freq_table
+type_lik_table <- prop.table(type_freq_table)
+type_lik_table
+
+## 5. Construct a naive_bayes classifier
+nb_model <- function(par) {
+  # Find the row number of the parameters
+  row_par <- match(par, rownames(final_freq_lik_table))
+  
+  # Call out the prior probabilities (likelihood of each types) and class label p(par|type) = p(par) (likelihood of each dignosis types) and multiply it all together.
+  p_par_type <- data.frame(type = c("type 1","type 2","type 3","type 4","type 5","type 6"), prop = rep(NA, 6))
+  for (i in 1:6) {
+  p_par_type[i,2] <- as.numeric(prod(final_freq_lik_table[row_par, i+6])*type_lik_table[i])
+  }
+  
+  # If the probability of type A from all the parameter is more than other types and it is categorize as type A
+  final_results <- p_par_type[which.max(p_par_type$prop),1]
+  return(final_results)
+}
+
+# -- EVALUATE--
+eds_df_nb_test$predict <- apply(eds_df_nb_test[1:34], 1, nb_model)
+x <- table(eds_df_nb_test$predict, eds_df_nb_test$type)
+sum(diag(x))/sum(x) # 0.8571429 accuracy rate
+
+# -- IMPROVING MODEL PERFORMANCE -- 
+# Please see above explanation.
+```
+
+# Summary
+
+```{r Summary}
+`Initial model accuracy` <- c("0.6263736 with 1 hidden node",
+                              "0.9450549 without boosting",
+                              "1 without laplace smoothing",
+                              "0.8571429")
+`Final model accuracy` <- c("0.9670330 with 4 hidden node",
+                            "0.9450549 without boosting",
+                            "0.989011 with laplace smoothing",
+                            "N/A")
+Note <- c("Stable trend when hidden node increase",
+          "Unstable trend when boosting increase suggest the noise in the data that will cause model judgement",
+          "Laplace smoothing solves the overfitting problem",
+          "Need further improvement such as classifier combination via ensembling, boosting, and bagging. It also makes sense to explore further at the data quality.")
+summary <- data.frame(cbind(`Initial model accuracy`, `Final model accuracy`, Note))
+rownames(summary) <- c("Neural Network", "C5.0 Decision Tree", "e1071 Naive Bayes", "Alternative Naive Bayes")
+summary
+```
+
+# CRISP-DM: Deployment
+
+- Medical information providers such as WebMD can inform accurate information to their users so their users can determine if visiting a clinic is necessary.
+- The clinical decision-maker can determine the correct treatment in the earlier stage to prevent delay in treatment.
+- The pharmaceutical companies can analyze the data of most frequent occur types in order to define their project scope and pull in research to develop more effective drugs.
+
+# References
+
+- https://www.webmd.com/skin-problems-and-treatments/psoriasis/ss/slideshow-psor-overview
+- http://www.desimd.com/?q=health-education/skin-and-subcutaneous-disorders/seborrhic-dermatitis
+- https://www.aad.org/public/diseases/rashes/lichen-planus
+- https://www.mayoclinic.org/diseases-conditions/pityriasis-rosea/symptoms-causes/syc-20376405
+- https://nationaleczema.org/eczema/types-of-eczema/atopic-dermatitis/
+- http://www.pcds.org.uk/clinical-guidance/pityriasis-rubra-pilaris
+- https://archive.ics.uci.edu/ml/datasets/Dermatology
+- https://machinelearningmastery.com/better-naive-bayes/
