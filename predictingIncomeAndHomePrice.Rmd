@@ -1,0 +1,602 @@
+---
+title: "DA5030.P2.Shen"
+author: "Terri Shen"
+output:
+  html_document:
+    df_print: paged
+---
+```{r loading packages}
+# Loading packages
+library(tidyverse)
+library(magrittr)
+library(psych)
+library(gmodels)
+library(dplyr)
+library(plyr)
+library(caret)
+library(readxl)
+library(moments)
+library(purrr)
+library(tidyr)
+```
+
+## Problem 1  (60 Points)
+1. (0 pts) Download the data set Census Income Data for Adults along with its explanation. Note that the data file does not contain header names; you may wish to add those. The description of each column can be found in the data set explanation.
+
+```{r}
+income_df <- read.csv("/Users/terrishen/jiayishen.terri sync/NEU/DA5030/P2/Census Income Data for Adults along with its explanation/adult.data", header = FALSE)
+colnames(income_df) <- c("age", "workclass", "fnlwgt", "education", "education-num",
+                         "marital-status", "occupation", "relationship", "race", "sex",
+                         "capital-gain", "capital-loss", "hours-per-week", "native-country", "income")
+income_df
+```
+
+2. (0 pts) Explore the data set as you see fit and that allows you to get a sense of the data and get comfortable with it. Is there distributional skew in any of the features? Is there a need to apply a transform?
+```{r}
+# Seperate continuous and categorical dataframe
+continuous_v <- c(1, 3, 5, 11, 12, 13)
+continuous_df <- income_df[, continuous_v]
+#continuous_df <- data.frame(sapply(continuous_df, as.numeric))
+continuous_df
+
+# Examine the skewness of continuous dataframe
+summary(continuous_df)
+pairs.panels(continuous_df)
+
+skew_continuous_df <- data.frame(skew_continuous_variables = skew(continuous_df))
+rownames(skew_continuous_df) <- c("V1 age", "V3 fnlwgt", "V5 education.num", "V11 capital.gain", "V12 capital.loss", "V13 hours.per.week")
+skew_continuous_df
+
+# Apply sqrt transformation to fnlwgt because its right positive skewed
+skew(log(income_df$fnlwgt))
+skew(sqrt(income_df$fnlwgt)) # Looks better than log but it should be okay through because it is like the value we are trying to predict.
+hist(sqrt(income_df$fnlwgt))
+
+# Determine if there is missing value
+which(is.na(income_df)) # No missing value
+```
+
+3. (10 pts) Create a frequency and then a likelihood table for the categorical features in the data set. Build your own Naive Bayes classifier for those features.
+``` {r}
+# Define the categorical variable's dataframe
+## workclass (9 levels), education (16 levels), marital-status (7 levels), occupation (15 levels), relationship (6 levels), race (5 levels), sex (2 levels), native-country (42 levels)
+categorical_df <- income_df[, -continuous_v]
+col_income <- categorical_df[,9]
+
+# Build function for making the frequency liklihood table
+freq_lik_function <- function(x) {
+  tbl_freq <- table(x, col_income)
+  `percent_<=50K` <- round(tbl_freq[,1]/sum(tbl_freq[,1]), 6)
+  `percent_>50K` <- round(tbl_freq[,2]/sum(tbl_freq[,2]), 6)
+  all <- cbind(tbl_freq, `percent_<=50K`, `percent_>50K`)
+  colnames(all) <- c("<=50K", ">50K", "percent_<=50K", "percent_>50K")
+  all
+}
+
+# Apply to all categorical variables and construct a list
+final_freq_lik_table <- do.call(rbind, lapply(categorical_df[1:8], freq_lik_function))
+final_freq_lik_table
+str(final_freq_lik_table)
+
+# Construct a frequency table for income
+income_freq_table <- table(categorical_df$income)
+income_freq_table
+
+# Create Naive Bayes classifer
+## Calculation the class conditional independence P(D|h) = P(D|h)*P(h)/P(D)
+## Assume <=50K as true
+naive_bayes <- function(freq_lik_table, income_freq_table, par) {
+    # Find the row number of the parameters
+    row_par <- match(par, rownames(freq_lik_table))
+  
+    # Call out the prior probabilities (likelihood of <=50) of class label p(par|less50K) = p(par) and multiply it all together
+    p_par_less50K <- prod(freq_lik_table[row_par, 3])*income_freq_table[1]
+    p_par_greater50K <- prod(freq_lik_table[row_par, 4])*income_freq_table[2]
+
+    # If the probability of less than 50K from all the parameter is more than 50%, then it is categorize as "<=50K".
+    final <- p_par_less50K / (p_par_less50K + p_par_greater50K)
+    result <- ifelse(final > 0.5, "<=50K", ">50K")
+    names(result) <- c("Prediction")
+    return(result)
+}
+```
+
+``` {r}
+# ------ NOTES -----
+#workclass_df <- categorical_df[,c(1,9)]
+#education_df <- categorical_df[,c(2,9)]
+#marital_status_df <- categorical_df[,c(3,9)]
+#occupation_df <- categorical_df[,c(4,9)]
+#relationship_df <- categorical_df[,c(5,9)]
+#race_df <- categorical_df[,c(6,9)]
+#sex_df <- categorical_df[,c(7,9)]
+#native_country_df <- categorical_df[,c(8,9)]
+
+# Build function for making the frequency liklihood table
+#freq_lik_table <- function(df) {
+#      freq_table <- table(x = df[,1], df[,2])
+#      `percent_<=50K` <- freq_table[,1]/sum(freq_table[,1])
+#      `percent_>50K` <- freq_table[,2]/sum(freq_table[,2])
+#      freq_lik_table <- cbind(freq_table, `percent_<=50K`, `percent_>50K`)
+#      rownames(freq_lik_table) <- rownames(freq_table)
+      #names(dimnames(freq_lik_table)) <- c(names(df)[1], "Frequency and Likelihood Table")
+#      return(freq_lik_table)
+#}
+
+# Make tables for the categorical variables
+#workclass_freq_lik_table <- freq_lik_table(workclass_df)
+#workclass_freq_lik_table
+#education_freq_lik_table <- freq_lik_table(education_df)
+#marital_status_freq_lik_table <- freq_lik_table(marital_status_df)
+#occupation_freq_lik_table <- freq_lik_table(occupation_df)
+#relationship_freq_lik_table <- freq_lik_table(relationship_df)
+#race_freq_lik_table <- freq_lik_table(race_df)
+#sex_freq_lik_table <- freq_lik_table(sex_df)
+#native_country_freq_lik_table <- freq_lik_table(native_country_df)
+```
+
+4. (30 pts)Predict the binomial class membership for a white female adult who is a federal government worker with a bachelors degree who immigrated from India. Ignore any other features in your model. You must build your own Naive Bayes Classifier -- you may not use a package.
+
+The prediction from my naive bayes classifer shows that this person will have income over 50K.
+```{r}
+# Identify the subjects parameter and find the it's row number in the likelihood table
+par <- c(" Female", " White", " Bachelors", " Federal-gov", " India")
+naive_bayes(final_freq_lik_table, income_freq_table, par)
+```
+
+5. (20 pts) Perform 10-fold cross validation on your algorithm to tune it and report the final accuracy results.
+
+The the average of final accuracy results is 0.7943097 (79.43%).
+
+```{r}
+# Create 10 folds and use it tp slice the data
+set.seed(123)
+fold <- createFolds(categorical_df$income, 10)
+#str(summary(fold))
+
+# Create empty vector to store all the result
+accuracy_all <- NULL
+for(j in 1:length(fold)){
+  
+  test_fold_df <- categorical_df[fold[[j]],]
+  train_fold_df <- categorical_df[-fold[[j]],]
+  
+  # Train on training datafrmae
+  col_income <- train_fold_df[,9]
+  
+  # Construct a frequency table for income
+  income_freq_table <- table(col_income)
+  
+  # Apply to all categorical variables and construct a list
+  train_freq_lik_table <- do.call(rbind, lapply(train_fold_df[1:8], freq_lik_function))
+  
+  # The parameter are now the column of each row related to each observation
+  for(i in 1:nrow(test_fold_df)){
+    par01 <- unlist(test_fold_df[i,1:8])
+    test_fold_df$prediction[i] <- naive_bayes(train_freq_lik_table, income_freq_table, par01)
+  }
+  # Construct a confusion matrix and find the accuracy of this fold
+  restult <- table(test_fold_df$income, test_fold_df$prediction)
+  accuracy_fold <- sum(diag(restult))/sum(restult)
+  
+  # Print all the accuracy results out into one list
+  for(i in 10) {
+    accuracy_all <- rbind(accuracy_all, accuracy_fold)
+  }
+}
+# Calculate overall accuracy
+  mean(accuracy_all)
+```
+
+```{r}
+# ------ NOTES -----
+# Define testing and training data set
+#test_fold_df01 <- categorical_df[fold[[1]],]
+#train_fold_df01 <- categorical_df[-fold[[1]],]
+#test_fold_df01
+#train_fold_df01
+
+# Train on training datafrmae
+#col_income <- train_fold_df01[,9]
+
+# Construct a frequency table for income
+#income_freq_table <- table(col_income)
+#income_freq_table
+
+# Apply to all categorical variables and construct a list
+#train_freq_lik_table_01 <- do.call(rbind, lapply(train_fold_df01[1:8], freq_lik_function))
+#train_freq_lik_table_01
+#str(train_freq_lik_table_01)
+
+# The parameter are now the column of each row related to each observation
+#for(i in 1:nrow(test_fold_df01)){
+#  par01 <- unlist(test_fold_df01[i,1:8])
+#  test_fold_df01$prediction[i] <- naive_bayes(train_freq_lik_table_01, income_freq_table, par01)
+#}
+# The testing data frame now contain prediction column 
+#test_fold_df01
+# Construct a confusion matrix and find the accuracy of this fold
+#restult10 <- table(test_fold_df01$income, test_fold_df01$prediction)
+#accuracy <- sum(diag(restult10))/sum(restult10)
+#accuracy
+#length(fold)
+```
+
+## Problem 2 (25 Points)
+After reading the case study background information, using the UFFI data set, answer these questions:
+
+### 1. (5 pts) Are there outliers in the data set? How do you identify outliers and how do you deal with them? Remove them but create a second data set with outliers removed. Keep the original data set.
+
+- There are 99 records and 12 variables.
+- Based on the graphs and calculated skewness:
+    * observation ID and is just record index.
+    * Living Area_SF, Sales Price, Lot Area, Basmnt Fin_SF are right skewed and might have outliers.
+    * Year Sold looks okay and categorical variables.
+    * 45 Yrs+, Enc Pk Spaces, Pool, Brick Ext, UFFI IN, Central Air looks like factors with levels.
+- Remove outliers in Living Area_SF, Sale Price, Lot Area, and Bsmnt Fin_SF by removing the data that is more than 1.5 standard deviation from the mean.
+
+#### Exploring original data frame: uffi_df
+```{r}
+# Import data and create original dataframe
+uffi_df <- readxl::read_xlsx("uffidata.xlsx")
+uffi_df
+
+# Scan through the data structure
+## Looks like we need to address Living Area_SF, Sales Price, Lot Area, Basmnt Fin_SF
+str(uffi_df)
+head(uffi_df)
+summary(uffi_df)
+
+# Define the Living Area_SF, Sales Price, Lot Area, Basmnt Fin_SF variables in order to remove outliers
+cols <- c("Living Area_SF", "Sale Price", "Lot Area", "Bsmnt Fin_SF")
+n <- length(cols)
+y <- match(cols, names(uffi_df)) # Column number
+
+# Quick visual scan for these variables
+boxplot_old <- uffi_df[,y] %>%
+        gather() %>%
+        ggplot(aes(y = value)) +
+        facet_wrap(~ key, scales = "free") +
+        geom_boxplot()
+boxplot_old
+hist_old <- uffi_df[,y] %>%
+        gather() %>%
+        ggplot(aes(value)) +
+        facet_wrap(~ key, scales = "free") +
+        geom_histogram()
+hist_old
+
+# Examie the skewness and kurtosis
+skew_kurtosis <- data.frame(cbind(skewness_old = moments::skewness(uffi_df[,y]), kurtosis_old = moments::kurtosis(uffi_df[,y])))
+skew_kurtosis
+```
+
+#### Removing outliers and make a new data frame
+```{r}
+# Create function to find z score
+zscore <- function(x) {
+    mean <- mean(x)
+    sd <- sd(x)
+    z <- abs((mean - x) / sd)
+}
+
+# Create data frame of z scores from Living Area_SF, Sale Price, Lot Area, and Bsmnt Fin_SF and combine with the original dataframe
+z_df <- lapply(uffi_df[,y], zscore)
+z_df
+## Name the columns of the derived z score column to avoid confusion
+uffi_z_df <- z_df %>% data.frame() %>% set_colnames(c("z_Living Area_SF", "z_Sale Price", "z_Lot Area", "z_Bsmnt Fin_SF")) %>% cbind(uffi_df)
+uffi_z_df
+
+# Identify the row number that will have z score larger than 1.5
+v1 <- which(uffi_z_df$`z_Living Area_SF` > 1.5)
+v2 <- which(uffi_z_df$`z_Sale Price` > 1.5)
+v3 <- which(uffi_z_df$`z_Lot Area` > 1.5)
+v4 <- which(uffi_z_df$`z_Bsmnt Fin_SF` > 1.5)
+
+# Combine all the row number and delete the duplicated row number
+row_num <- c(v1, v2, v3, v4) %>% sort() %>% unique() 
+row_num
+
+# Ther are 27 rows in total need to be removed
+length(row_num)
+
+# Remove the row in the data frame and make a new data frame called "uffi_df_new" which consist of 73 rows.
+uffi_df_new <- uffi_df[-row_num,]
+uffi_df_new
+```
+
+#### Exploring new data frame: uffi_df_new
+```{r}
+# Quick visual scan
+boxplot_new <- uffi_df_new[,y] %>%
+        gather() %>%
+        ggplot(aes(y = value)) +
+        facet_wrap(~ key, scales = "free") +
+        geom_boxplot()
+boxplot_new
+hist_new <- uffi_df_new[,y] %>%
+        gather() %>%
+        ggplot(aes(value)) +
+        facet_wrap(~ key, scales = "free") +
+        geom_histogram()
+hist_new
+
+# Examine the skewness and kurtosis, looks much better compare to the original one
+skew_kurtosis <- data.frame(cbind(skew_kurtosis, skewness_new = moments::skewness(uffi_df_new[,y]), kurtosis_new = moments::kurtosis(uffi_df_new[,y])))
+skew_kurtosis
+```
+
+```{r}
+# ---------- NOTES -----------
+# Remove outliers (entrie row) in Living Area_SF, Sale Price, Lot Area, and Bsmnt Fin_SF, since they are right skewed and might have outliers.
+## Remove outlier: Living Area_SF 
+#mean <- mean(uffi_df$`Living Area_SF`)
+#sd <- sd(uffi_df$`Living Area_SF`)
+#`z_Living Area_SF` <- abs((mean - uffi_df$`Living Area_SF`) / sd)
+#row_num <- which(`z_Living Area_SF` > 1.5)
+#uffi_df_rm1 <- uffi_df[-row_num,]
+
+# Remove rows that have less than 
+#names(var_df)
+#nrow(uffi_df[,var_row])
+#colnames(result) <- paste("z_", 1, sep = "")
+#list_x <- list()
+#    for (i in names(var_df)) {
+#        mean <- mean(var_df[[i]])
+#        sd <- sd(var_df[[i]])
+#        z <- abs((mean - var_df[[i]]) / sd)
+#        z <- data.frame(z)
+#        colnames(z) <- paste("z_", i, sep ="")
+#        z[[i]]
+#        print(i)
+#  }
+```
+
+2. (2 pts) What are the correlations to the response variable and are there collinearities? Build a full correlation matrix.
+
+- Based on the data description behind the data set, the response variable is the property value, sale price.
+- The correlation with response to sale price is stored in data frame cor_sale.
+- The pairs.panel doesn't really show the mild collinearity with some variables and we can investigate later while building the regression model.
+
+```{r}
+# Build a full correlation matrix.
+cor_matrix <- cor(uffi_df_new)
+cor_matrix
+
+# Showing the correlations to the response variable
+cor_sale <- cor_matrix[3,] %>% as.data.frame() %>% set_colnames(c("Correlation to Sale Price"))
+cor_sale
+
+# Build a pairs panels to examine collinearity
+pairs.panels(uffi_df_new)
+```
+
+3. (10 pts) What is the ideal multiple regression model for predicting home prices in this data set using the data set with outliers removed? Provide a detailed analysis of the model, including Adjusted R-Squared, RMSE, and p-values of principal components. Use backward elimination by p-value to build the model.
+
+- Using regression model to predict the home prices.
+- Analysis on the intitial model before elimination:
+    1) Adjusted R-Squared shows a 0.621 which means that the model explain 62% of the variation in sales price.
+    2) The calculated RMSE is 12410.58.
+    3) p-values of principal components shows:
+        * `Year Sold`(p-value 1.64e-08) and `Living Area_SF`(p-value 5.93e-06) shows an strong significance.
+        * `UFFI IN`(p-value 0.0436) and `Bsmnt Fin_SF`(p-value 0.0312) shows mild significance.
+        * `Enc Pk Spaces`(p-value 0.0509) shows even milder significance, I will include in the next elimination model to see it's significance.
+        * The rest of the variables `Brick Ext`, `45 Yrs+`,`Lot Area`, `Central Air`, Pool, Observation will be eliminated becase their p-value is too large to be consider significant.
+- Backward elimination example and model cross validation:
+    1) The elimination model shows that `Enc Pk Spaces`(p-value 0.1032) need to be removed. Therefore, the first stepwise backward elmination includes variables `Year Sold`, `Living Area_SF`, `UFFI IN`, `Bsmnt Fin_SF`, `Enc Pk Spaces` by accessing p-value from the first model.The derived p-value of `Enc Pk Spaces`(p-value 0.1032) shows no significance which tells me to eliminate further.
+    2) The second stepwise backward elimination includes variables `Year Sold` + `Living Area_SF` + `UFFI IN` + `Bsmnt Fin_SF` and all the p-value shows that all variables are significant.
+
+Note:
+  - Looking at individual p-values can be misleading becasue the prediction variables might be collinear between each other which results in big p-vlaue
+  - However, we can take a closer look at rmse and adjusted.r.squared matix below to make a final judgement. A model (model_aic) is also built by using the AIC as indicator for backward emlimination, which results in highest correlation and smallest rmse. It seems like the most desire model if we are to predict the trend.
+  - Since the question ask us to use backward elimination by p-value to build the model, I am choosing the model_2 to use as in the final model but it might not be the best choose to use p-value as indicator since the r-square and rmse data shows that the model doesn't explain as much of variation and might contains more error than other model. 
+
+```{r}
+str(uffi_df_new)
+# ----- STEPWISE BACKWARD ELIMINATION USING P-VALUE -----
+# Find model before predictor elimination
+model <-  lm(`Sale Price` ~ ., data = uffi_df_new)
+summary(model)
+
+# Backward elimination to find the new model inclue `Enc Pk Spaces` and examine it's p-value again.
+model_1 <- lm(`Sale Price` ~ `Year Sold` + `Living Area_SF` + `UFFI IN` + `Bsmnt Fin_SF` + `Enc Pk Spaces`, data = uffi_df_new)
+summary(model_1)
+
+# The preivous model suggest that we need to remove `Enc Pk Spaces` because p-value shows insignificant.
+model_2 <- lm(`Sale Price` ~ `Year Sold` + `Living Area_SF` + `UFFI IN` + `Bsmnt Fin_SF`, data = uffi_df_new)
+summary(model_2)
+
+# ----- STEPWISE BACKWARD ELIMINATION USING AIC -----
+model_aic <- step(model, direction = "backward")
+model_aic$call[[2]] # Shows the final equcation using AIC indicator
+summary(model_aic)
+
+# Build adjusted.r.squared and RMSE table for to examine with model is better
+adj.r.squared <- c(model = summary(model)$adj.r.squared, model_1 = summary(model_1)$adj.r.squared, model_2 = summary(model_2)$adj.r.squared, model_aic = summary(model_aic)$adj.r.squared)
+rmse <- c(sqrt(mean((model$residuals)^2)), sqrt(mean((model_1$residuals)^2)), sqrt(mean((model_2$residuals)^2)), sqrt(mean((model_aic$residuals)^2)))
+compare_matrix <- t(rbind(adj.r.squared, rmse))
+compare_matrix
+```
+
+4. (3 pts) On average, by how much do we expect UFFI to change the value of a property? Note that 1 indicates the presence of UFFI in the building.
+
+Based on the coefficient for UFFI IN (-9584.55), it indicates that if the UFFI is in the building the sales price of the property will be decreased by about $9584.55.
+```{r}
+model_2$call[[2]]
+model_2$coefficients
+```
+
+5. (5 pts) If the home in question is older than 45 years old, doesn’t have a finished basement, has a lot area of 7800 square feet, has a wood exterior, 1 enclosed parking space, 1720 square feet of living space, UFFI, no central air, and no pool, what is its predicted value and what is the 95% prediction interval of this home?
+
+The final model from question 3 cannot be used becasue some values of the variable in the model is not given. A new model is constructed using backward elimination by AIC. 
+```{r}
+# Define variables in the question
+`45 Yrs+` <- 1
+`Bsmnt Fin_SF` <- 0
+`Lot Area` <- 7800
+`Brick Ext` <- 0
+`Enc Pk Spaces` <- 1
+`Living Area_SF` <- 1720
+`UFFI IN` <- 1
+`Central Air` <- 0
+`Pool` <- 0
+
+home_data <- as.data.frame(c(`45 Yrs+`, `Bsmnt Fin_SF` ,`Lot Area` ,`Brick Ext` ,`Enc Pk Spaces` ,`Living Area_SF` ,`UFFI IN`, `Central Air` ,`Pool`))
+
+# Find the regression model by using above variables, and then AIC backward elimination to find final model
+## We will be using `Bsmnt Fin_SF`, `Brick Ext`, `Enc Pk Spaces`, `Living Area_SF`, `UFFI IN` variables to identify property value.
+model_q5 <- step((lm(`Sale Price` ~ `45 Yrs+` + `Bsmnt Fin_SF` + `Lot Area` + `Brick Ext` + `Enc Pk Spaces` + `Living Area_SF` + `UFFI IN` + `Central Air` + `Pool`, data = uffi_df_new )), direction = "backward")
+model_q5$coefficients
+summary(model_q5)
+
+# Define the final model by education and find the 95% interval
+property_value <- model_q5$coefficients[[1]] +
+                  model_q5$coefficients[[2]]*`Bsmnt Fin_SF` + 
+                  model_q5$coefficients[[3]]*`Brick Ext` + 
+                  model_q5$coefficients[[4]]*`Enc Pk Spaces` + 
+                  model_q5$coefficients[[5]]*`Living Area_SF` +
+                  model_q5$coefficients[[6]]*`UFFI IN`
+property_value
+property_value + c(-1, 0 ,1) * 1.96 * summary(model_q5)$sigma
+
+# Predict the property value with 95% confidece interval by build-in function
+home_value <- predict(model_q5, home_data, interval = "prediction", level = 0.95)
+home_value
+```
+
+## Problem 3 (35 Points)
+1. (5 pts) Investigate the Bank Marketing Data Set. Use the bank-full.csv in bank.zip for training your model. Use bank.csv in bank.zip for validating your model.
+```{r}
+# Traning data set
+train_bank_df <- read.csv("/Users/terrishen/jiayishen.terri sync/NEU/DA5030/P2/bank/bank-full.csv",  header = TRUE, sep = ";")
+head(train_bank_df)
+str(train_bank_df)
+
+# Validating data set
+validate_bank_df <- read.csv("/Users/terrishen/jiayishen.terri sync/NEU/DA5030/P2/bank/bank.csv", header = TRUE, sep = ";")
+head(validate_bank_df)
+str(validate_bank_df)
+```
+
+2. (15 pts) Construct a logistic regression model to predict the probability of a customer subscribing to a term deposit. Test the statistical significance of all parameters and eliminate those that have a p-value > 0.05 using stepwise backward elimination. Be sure to encode categorical variables as dummy codes.
+
+The final logistic regression model to predict the probability of a customer subscribing to a term deposit is as follow:
+`y10 ~ balance + day + duration + campaign + retired + student + married + primary + no.1 + no.2 + cellular + telephone + apr + aug + feb + jan + jul + jun + mar + may + nov + other + success`
+
+```{r}
+# Create dummy variables for categorical variables
+## job, marital, education, default, housing
+## loan, contact, month, poutcome, y
+job_dv <- dummy.code(train_bank_df$job)
+marital_dv <- dummy.code(train_bank_df$marital)
+education_dv <- dummy.code(train_bank_df$education)
+default_dv <- dummy.code(train_bank_df$default)
+housing_dv <- dummy.code(train_bank_df$housing)
+loan_dv <- dummy.code(train_bank_df$loan)
+contact_dv <- dummy.code(train_bank_df$contact)
+month_dv <- dummy.code(train_bank_df$month)
+poutcome_dv <- dummy.code(train_bank_df$poutcome)
+ 
+train_bank_df <- data.frame(job_dv, marital_dv, education_dv, default_dv, housing_dv,
+                            loan_dv, contact_dv, month_dv, poutcome_dv,train_bank_df)
+
+# Predicting y10
+train_bank_df$y10 <- as.numeric(ifelse(train_bank_df$y == "yes", "1", "0"))
+
+train_bank_df
+str(train_bank_df)
+
+as.data.frame(colnames(train_bank_df))
+## categorical variables
+# Job_dv (12L): admin. + blue.collar + entrepreneur + housemaid + management + retired + self.employed + services + student + technician + unemployed /(unknown)
+# marital_dv 3L): divorced + married /(single)
+# education_dv (4L): primary + secondary + tertiary /(unknown.1)
+# default_dv (2L): no /(yes)
+# housing_dv (2L): no.1 /(yes.1)
+# loan_dv (2L): no.2 /(yes.2)
+# contact_dv (3L): cellular + telephone /(unknown.2)
+# month_dv (12L): apr + aug + dec + feb + jan + jul	+ jun + mar + may + nov + oct /(sep)
+# poutcome_dv (4L): failure	+ other + success /(unknown.3)
+
+## continuous variables
+# age + balance + day +  duration + campaign +  pdays +  previous
+```
+
+
+```{r}
+# Logistic regression model
+final_ylm<- glm(y10 ~ age + balance + day +  duration + campaign +  pdays +  previous
+                            + admin. + blue.collar + entrepreneur + housemaid + management + retired + self.employed + services + student + technician + unemployed
+                            + divorced + married
+                            + primary + secondary + tertiary
+                            + no + no.1 + no.2
+                            + cellular + telephone
+                            + apr + aug + dec + feb + jan + jul	+ jun + mar + may + nov + oct
+                            + failure + other + success,
+                            data = train_bank_df, family = "binomial")
+final_ylm
+
+# Test the statistical significance of all parameters
+summary(final_ylm)
+
+# Eliminate those that have a p-value > 0.05 using stepwise backward elimination
+## Eliminated variables (p >0.05): age ,pdays ,previous ,admin. ,blue.collar ,entrepreneur ,housemaid ,management ,self.employed ,services ,technician ,unemployed ,divorced ,secondary ,tertiary ,no ,dec ,oct ,failure
+final_ylm <- glm(y10 ~ balance + day + duration + campaign + retired + student + married + primary + no.1 + no.2 + cellular + telephone + apr + aug + feb + jan + jul + jun + mar + may + nov + other + success, data = train_bank_df, family = "binomial")
+final_ylm
+summary(final_ylm)
+final_ylm$call[[2]]
+```
+    
+3. (5 pts) State the model as a regression equation.
+`final_ylm = (-4.351549e+00) + balance*(1.474882e-05) + day*(1.028398e-02) + duration*(4.169765e-03) + campaign*(-9.088403e-02)
+            + retired*(4.361610e-01) + student*(5.500324e-01) + married*(-2.697454e-01) + primary*(-3.449424e-01) 
+            + no.1*(6.793818e-01) + no.2*(4.379631e-01) + cellular*(1.680175e+00) + telephone*(1.495146e+00) + apr*(-8.875532e-01) 
+            + aug*(-1.572498e+00) + feb*(-1.023569e+00) + jan*(-2.147395e+00) + jul*(-1.748185e+00) + jun*(-4.195233e-01) 
+            + mar*(7.503454e-01) + may*(-1.288034e+00) + nov*(-1.762196e+00) + other*(2.896774e-01) + success*(2.391809e+00)`
+
+```{r}
+x <- as.matrix(final_ylm$coefficients)
+x
+```
+
+4. (10 pts) Test the model against the test data set (bank.csv) and determine its prediction accuracy (as a percentage correct).
+
+- After testing the model against the test data set (bank.csv) the prediction accuracy is 89.69%.
+```{r}
+# Create dummy variables for categorical variables
+## job, marital, education, default, housing
+## loan, contact, month, poutcome, y
+job_dv <- dummy.code(validate_bank_df$job)
+marital_dv <- dummy.code(validate_bank_df$marital)
+education_dv <- dummy.code(validate_bank_df$education)
+default_dv <- dummy.code(validate_bank_df$default)
+housing_dv <- dummy.code(validate_bank_df$housing)
+loan_dv <- dummy.code(validate_bank_df$loan)
+contact_dv <- dummy.code(validate_bank_df$contact)
+month_dv <- dummy.code(validate_bank_df$month)
+poutcome_dv <- dummy.code(validate_bank_df$poutcome)
+ 
+validate_bank_df <- data.frame(job_dv, marital_dv, education_dv, default_dv, housing_dv,
+                            loan_dv, contact_dv, month_dv, poutcome_dv, validate_bank_df)
+
+# Predicting y10
+validate_bank_df$y10 <- as.numeric(ifelse(validate_bank_df$y == "yes", "1", "0"))
+
+final_ylm$call[[2]]
+# Prediction
+prediction_y <- glm(final_ylm$call[[2]], data = train_bank_df)
+prediction_y <- predict(prediction_y, validate_bank_df)
+#prediction_y10 <- predict(prediction_y, data = validate_bank_df)
+#prediction_y10
+validate_bank_df$prediction_y10 <- ifelse(prediction_y < 0.5, 0, 1)
+validate_bank_df
+```
+```{r}
+# Prepare for comparison
+validate_bank_df$y10 <- as.factor(validate_bank_df$y10)
+validate_bank_df$prediction_y10 <- as.factor(validate_bank_df$prediction_y10)
+
+confusionMatrix(validate_bank_df$prediction_y10, validate_bank_df$y10)
+table(validate_bank_df$prediction_y10, validate_bank_df$y10)
+```
+
